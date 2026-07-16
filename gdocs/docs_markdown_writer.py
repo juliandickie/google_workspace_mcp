@@ -53,8 +53,10 @@ def _utf16_len(text: str) -> int:
     Python len() counts code points, so any non-BMP character (emoji and
     other supplementary-plane characters) would otherwise undercount by one
     UTF-16 unit and shift every later insertion index and style range.
+    surrogatepass keeps lone surrogates (possible in poorly scraped input)
+    counting as single code units instead of raising UnicodeEncodeError.
     """
-    return len(text.encode("utf-16-le")) // 2
+    return len(text.encode("utf-16-le", errors="surrogatepass")) // 2
 
 
 def _emit_requests(tokens, requests, tab_id, start_index):
