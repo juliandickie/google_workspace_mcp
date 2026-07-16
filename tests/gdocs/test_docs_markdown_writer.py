@@ -467,6 +467,59 @@ def test_multiple_tables_maintain_correct_offsets():
     assert tables[1]["location"]["index"] == 28
 
 
+def test_emoji_paragraph_advances_cursor_in_utf16_units():
+    """Docs indexes count UTF-16 code units - a non-BMP emoji is 2 units."""
+    requests = markdown_to_docs_requests("Hi \U0001f600\n\nAfter")
+    inserts = [r for r in requests if "insertText" in r]
+    texts = [r["insertText"]["text"] for r in inserts]
+    assert texts == ["Hi \U0001f600\n", "\n", "After\n", "\n"]
+    # "Hi <emoji>\n" is 6 UTF-16 units (H, i, space, 2 for the emoji, newline),
+    # so the spacer lands at 7 and "After" at 8.
+    assert inserts[1]["insertText"]["location"]["index"] == 7
+    assert inserts[2]["insertText"]["location"]["index"] == 8
+
+
+def test_emoji_before_bold_span_offsets_style_range_in_utf16_units():
+    requests = markdown_to_docs_requests("\U0001f600 **bold**")
+    styles = [
+        r
+        for r in requests
+        if "updateTextStyle" in r and r["updateTextStyle"]["textStyle"].get("bold")
+    ]
+    assert len(styles) == 1
+    rng = styles[0]["updateTextStyle"]["range"]
+    # "<emoji> " is 3 UTF-16 units, so bold spans [4, 8).
+    assert rng["startIndex"] == 4
+    assert rng["endIndex"] == 8
+
+
+def test_emoji_in_table_cell_keeps_following_content_aligned():
+    md = "| A | B |\n|---|---|\n| \U0001f600 | ok |\n\nAfter"
+    requests = markdown_to_docs_requests(md)
+    inserts = [r for r in requests if "insertText" in r]
+    after = [i for i in inserts if i["insertText"]["text"] == "After\n"]
+    assert len(after) == 1
+    # Empty 2x2 table at 1 puts the next paragraph at 14; cell text adds
+    # 1 (A) + 1 (B) + 2 (emoji) + 2 (ok) = 6 UTF-16 units; spacer adds 1 -
+    # so "After" starts at 21.
+    assert after[0]["insertText"]["location"]["index"] == 21
+
+
+def test_emoji_header_cell_bold_range_uses_utf16_units():
+    md = "| \U0001f600! | B |\n|---|---|\n| 1 | 2 |"
+    requests = markdown_to_docs_requests(md)
+    bold_ranges = [
+        (
+            r["updateTextStyle"]["range"]["startIndex"],
+            r["updateTextStyle"]["range"]["endIndex"],
+        )
+        for r in requests
+        if "updateTextStyle" in r and r["updateTextStyle"]["textStyle"].get("bold")
+    ]
+    # Header cell "<emoji>!" fills at 5 and spans 3 UTF-16 units - [5, 8).
+    assert (5, 8) in bold_ranges
+
+
 def test_wide_table_beyond_docs_limit_degrades_to_text():
     """Docs rejects tables wider than 20 columns - the converter degrades to
     plain text lines rather than failing the whole batch."""
